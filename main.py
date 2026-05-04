@@ -1,6 +1,5 @@
 import logging
 import os
-import threading
 from datetime import datetime, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -15,10 +14,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from database import init_db
+from database import init_db, upsert_propiedad
 from scraper import run_scraping
 from analyzer import analizar_lote
-from notifier import enviar_alertas
+from notifier import enviar_alertas, enviar_mensaje
 from dashboard import run_dashboard, set_next_run
 
 
@@ -27,17 +26,33 @@ CICLO_HORAS = 6
 
 def pipeline():
     logger.info("═══ Iniciando ciclo de scraping ═══")
+
+    try:
+        enviar_mensaje("🔄 Ciclo iniciado — buscando propiedades...")
+    except Exception:
+        pass
+
+    # ── Scraping ──
     try:
         props = run_scraping()
         logger.info("Scraping: %d propiedades obtenidas", len(props))
     except Exception as e:
         logger.error("Fallo en scraping: %s", e)
+        try:
+            enviar_mensaje(f"❌ Error en scraping: {e}")
+        except Exception:
+            pass
         return
 
     if not props:
         logger.warning("Sin propiedades para analizar")
+        try:
+            enviar_mensaje("⚠️ Ciclo completado — sin propiedades nuevas")
+        except Exception:
+            pass
         return
 
+    # ── Análisis con Claude ──
     try:
         props_analizadas = analizar_lote(props)
         logger.info("Análisis completo: %d propiedades", len(props_analizadas))
@@ -45,8 +60,7 @@ def pipeline():
         logger.error("Fallo en análisis: %s", e)
         props_analizadas = props
 
-    # persistir en DB
-    from database import upsert_propiedad
+    # ── Persistencia ──
     nuevas = 0
     for prop in props_analizadas:
         try:
@@ -58,11 +72,25 @@ def pipeline():
 
     logger.info("Guardadas: %d nuevas / %d actualizadas", nuevas, len(props_analizadas) - nuevas)
 
+    # ── Alertas Telegram ──
+    enviadas = 0
     try:
         enviadas = enviar_alertas(max_alertas=5)
         logger.info("Alertas Telegram: %d enviadas", enviadas)
     except Exception as e:
         logger.error("Fallo en notificaciones: %s", e)
+
+    # ── Resumen de ciclo ──
+    try:
+        resumen = (
+            f"✅ Ciclo completado\n"
+            f"  📦 Analizadas: {len(props_analizadas)}\n"
+            f"  🆕 Nuevas en DB: {nuevas}\n"
+            f"  🔔 Alertas enviadas: {enviadas}"
+        )
+        enviar_mensaje(resumen)
+    except Exception:
+        pass
 
     logger.info("═══ Ciclo completado ═══")
 
@@ -80,22 +108,21 @@ def main():
         next_run_time=datetime.now(),  # primer ciclo inmediato
     )
 
-    def update_next_run():
-        job = scheduler.get_job("pipeline")
-        if job and job.next_run_time:
-            set_next_run(job.next_run_time.replace(tzinfo=None))
-
-    scheduler.add_listener(lambda e: update_next_run(), mask=0x1)  # EVENT_SCHEDULER_STARTED
-
     scheduler.start()
     logger.info("Scheduler iniciado — ciclo cada %dhs", CICLO_HORAS)
 
-    # actualizar next_run inicial
+    # Actualizar next_run en el dashboard
     try:
         next_dt = datetime.now() + timedelta(hours=CICLO_HORAS)
         set_next_run(next_dt)
     except Exception:
         pass
+
+    # Notificar arranque (después de que el scheduler ya lanzó el primer ciclo)
+    try:
+        enviar_mensaje("🚀 Agente Inmobiliario iniciado — primer ciclo arrancando ahora...")
+    except Exception as e:
+        logger.warning("No se pudo enviar mensaje de arranque: %s", e)
 
     port = int(os.environ.get("PORT", 5000))
     run_dashboard(port=port)

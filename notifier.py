@@ -82,6 +82,16 @@ def _send_telegram(token: str, chat_id: str, text: str) -> bool:
         return False
 
 
+def enviar_mensaje(texto: str) -> bool:
+    """Envía un mensaje de texto simple al bot de Telegram."""
+    token = os.environ.get("TELEGRAM_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "6702422377")
+    if not token:
+        logger.warning("TELEGRAM_TOKEN no configurado, no se puede enviar mensaje")
+        return False
+    return _send_telegram(token, chat_id, texto)
+
+
 def enviar_alertas(max_alertas: int = 5) -> int:
     token = os.environ.get("TELEGRAM_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "6702422377")
