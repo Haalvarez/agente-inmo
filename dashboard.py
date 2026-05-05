@@ -11,11 +11,17 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 _next_run: datetime | None = None
+_last_run_stats: dict = {}
 
 
 def set_next_run(dt: datetime):
     global _next_run
     _next_run = dt
+
+
+def set_last_run_stats(stats: dict):
+    global _last_run_stats
+    _last_run_stats = stats
 
 
 @app.route("/")
@@ -47,6 +53,7 @@ def index():
         propiedades=propiedades,
         stats=stats,
         next_run=next_run_str,
+        last_run=_last_run_stats,
         filters=filters,
         zonas=[
             "tigre", "nordelta", "delta", "rincon-de-milberg",
@@ -57,10 +64,20 @@ def index():
     )
 
 
+@app.route("/status")
+def status():
+    stats = get_stats()
+    next_run_str = _next_run.isoformat() if _next_run else None
+    return jsonify({
+        "db": stats,
+        "next_run": next_run_str,
+        "last_run": _last_run_stats,
+    })
+
+
 @app.route("/api/stats")
 def api_stats():
-    stats = get_stats()
-    return jsonify(stats)
+    return jsonify(get_stats())
 
 
 @app.route("/api/propiedades")

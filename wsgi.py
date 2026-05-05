@@ -18,7 +18,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 from database import init_db
-from dashboard import app, set_next_run  # app es el objeto Flask
+from dashboard import app, set_next_run, set_last_run_stats  # app es el objeto Flask  # noqa: F401
 
 _scheduler_started = False
 

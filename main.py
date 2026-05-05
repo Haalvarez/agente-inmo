@@ -18,13 +18,14 @@ from database import init_db, upsert_propiedad
 from scraper import run_scraping
 from analyzer import analizar_lote
 from notifier import enviar_alertas, enviar_mensaje
-from dashboard import run_dashboard, set_next_run
+from dashboard import run_dashboard, set_next_run, set_last_run_stats
 
 
 CICLO_HORAS = 6
 
 
 def pipeline():
+    inicio = datetime.now()
     logger.info("═══ Iniciando ciclo de scraping ═══")
 
     try:
@@ -38,6 +39,14 @@ def pipeline():
         logger.info("Scraping: %d propiedades obtenidas", len(props))
     except Exception as e:
         logger.error("Fallo en scraping: %s", e)
+        set_last_run_stats({
+            "inicio": inicio.isoformat(),
+            "estado": "error_scraping",
+            "error": str(e),
+            "scrapeadas": 0,
+            "nuevas": 0,
+            "alertas": 0,
+        })
         try:
             enviar_mensaje(f"❌ Error en scraping: {e}")
         except Exception:
@@ -46,8 +55,15 @@ def pipeline():
 
     if not props:
         logger.warning("Sin propiedades para analizar")
+        set_last_run_stats({
+            "inicio": inicio.isoformat(),
+            "estado": "sin_resultados",
+            "scrapeadas": 0,
+            "nuevas": 0,
+            "alertas": 0,
+        })
         try:
-            enviar_mensaje("⚠️ Ciclo completado — sin propiedades nuevas")
+            enviar_mensaje("⚠️ Ciclo completado — scraper no encontró propiedades (posible cambio de selectores HTML)")
         except Exception:
             pass
         return
@@ -80,11 +96,21 @@ def pipeline():
     except Exception as e:
         logger.error("Fallo en notificaciones: %s", e)
 
-    # ── Resumen de ciclo ──
+    duracion = int((datetime.now() - inicio).total_seconds() / 60)
+    set_last_run_stats({
+        "inicio": inicio.isoformat(),
+        "estado": "ok",
+        "scrapeadas": len(props),
+        "analizadas": len(props_analizadas),
+        "nuevas": nuevas,
+        "alertas": enviadas,
+        "duracion_min": duracion,
+    })
+
     try:
         resumen = (
-            f"✅ Ciclo completado\n"
-            f"  📦 Analizadas: {len(props_analizadas)}\n"
+            f"✅ Ciclo completado ({duracion} min)\n"
+            f"  🔍 Scrapeadas: {len(props)}\n"
             f"  🆕 Nuevas en DB: {nuevas}\n"
             f"  🔔 Alertas enviadas: {enviadas}"
         )
@@ -92,7 +118,7 @@ def pipeline():
     except Exception:
         pass
 
-    logger.info("═══ Ciclo completado ═══")
+    logger.info("═══ Ciclo completado en %d min ═══", duracion)
 
 
 def main():
@@ -105,20 +131,17 @@ def main():
         trigger="interval",
         hours=CICLO_HORAS,
         id="pipeline",
-        next_run_time=datetime.now(),  # primer ciclo inmediato
+        next_run_time=datetime.now(),
     )
 
     scheduler.start()
     logger.info("Scheduler iniciado — ciclo cada %dhs", CICLO_HORAS)
 
-    # Actualizar next_run en el dashboard
     try:
-        next_dt = datetime.now() + timedelta(hours=CICLO_HORAS)
-        set_next_run(next_dt)
+        set_next_run(datetime.now() + timedelta(hours=CICLO_HORAS))
     except Exception:
         pass
 
-    # Notificar arranque (después de que el scheduler ya lanzó el primer ciclo)
     try:
         enviar_mensaje("🚀 Agente Inmobiliario iniciado — primer ciclo arrancando ahora...")
     except Exception as e:
