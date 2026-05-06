@@ -18,10 +18,17 @@ from database import init_db, upsert_propiedad
 from scraper import run_scraping
 from analyzer import analizar_lote
 from notifier import enviar_alertas, enviar_mensaje
-from dashboard import run_dashboard, set_next_run, set_last_run_stats
+from dashboard import app, run_dashboard, set_next_run, set_last_run_stats
 
 
 CICLO_HORAS = 6
+
+
+@app.route("/run")
+def run_now():
+    """Endpoint de debugging: dispara pipeline() de forma sincrónica."""
+    pipeline()
+    return {"ok": True}
 
 
 def pipeline():
