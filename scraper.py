@@ -11,7 +11,6 @@ CATEGORIAS = {
     "terreno":      "MLA1474",
 }
 
-STATE_ID = "TUxBUEdCUw"
 BASE_URL  = "https://api.mercadolibre.com/sites/MLA/search"
 PAGES     = 2
 PAGE_SIZE = 50
@@ -41,10 +40,9 @@ def _fetch_categoria(tipo: str, categoria_id: str) -> list[dict]:
                 BASE_URL,
                 params={
                     "category": categoria_id,
-                    "state_id":  STATE_ID,
-                    "sort":      "date_desc",
-                    "limit":     PAGE_SIZE,
-                    "offset":    offset,
+                    "sort":     "date_desc",
+                    "limit":    PAGE_SIZE,
+                    "offset":   offset,
                 },
                 timeout=15,
             )
