@@ -1,5 +1,6 @@
 import logging
-from datetime import datetime
+import os
+from datetime import datetime, timedelta
 
 import requests
 
@@ -11,9 +12,45 @@ CATEGORIAS = {
     "terreno":      "MLA1474",
 }
 
-BASE_URL  = "https://api.mercadolibre.com/sites/MLA/search"
-PAGES     = 2
-PAGE_SIZE = 50
+BASE_URL      = "https://api.mercadolibre.com/sites/MLA/search"
+TOKEN_URL     = "https://api.mercadolibre.com/oauth/token"
+PAGES         = 2
+PAGE_SIZE     = 50
+
+# Cache del token en memoria (se renueva si expiró)
+_token_cache: dict = {"access_token": None, "expires_at": datetime.min}
+
+
+def _get_token() -> str:
+    """Obtiene un access_token usando client_credentials. Cachea hasta que expire."""
+    global _token_cache
+
+    if _token_cache["access_token"] and datetime.utcnow() < _token_cache["expires_at"]:
+        return _token_cache["access_token"]
+
+    client_id     = os.environ["ML_CLIENT_ID"]
+    client_secret = os.environ["ML_CLIENT_SECRET"]
+
+    resp = requests.post(
+        TOKEN_URL,
+        data={
+            "grant_type":    "client_credentials",
+            "client_id":     client_id,
+            "client_secret": client_secret,
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    access_token = data["access_token"]
+    # ML devuelve expires_in en segundos; restamos 60s de margen
+    expires_in   = int(data.get("expires_in", 21600)) - 60
+    expires_at   = datetime.utcnow() + timedelta(seconds=expires_in)
+
+    _token_cache = {"access_token": access_token, "expires_at": expires_at}
+    logger.info("Token ML renovado, expira en %ds", expires_in)
+    return access_token
 
 
 def _extraer_m2(attributes: list) -> float | None:
@@ -29,9 +66,10 @@ def _extraer_m2(attributes: list) -> float | None:
     return None
 
 
-def _fetch_categoria(tipo: str, categoria_id: str) -> list[dict]:
-    results = []
+def _fetch_categoria(tipo: str, categoria_id: str, token: str) -> list[dict]:
+    results   = []
     seen_ids: set[str] = set()
+    headers   = {"Authorization": f"Bearer {token}"}
 
     for page in range(PAGES):
         offset = page * PAGE_SIZE
@@ -44,6 +82,7 @@ def _fetch_categoria(tipo: str, categoria_id: str) -> list[dict]:
                     "limit":    PAGE_SIZE,
                     "offset":   offset,
                 },
+                headers=headers,
                 timeout=15,
             )
             resp.raise_for_status()
@@ -68,7 +107,7 @@ def _fetch_categoria(tipo: str, categoria_id: str) -> list[dict]:
             if precio_usd is None:
                 continue
 
-            m2       = _extraer_m2(item.get("attributes", []))
+            m2        = _extraer_m2(item.get("attributes", []))
             precio_m2 = (precio_usd / m2) if (m2 and m2 > 0) else None
 
             loc    = item.get("location", {})
@@ -99,12 +138,18 @@ def _fetch_categoria(tipo: str, categoria_id: str) -> list[dict]:
 
 
 def run_scraping() -> list[dict]:
+    try:
+        token = _get_token()
+    except Exception as e:
+        logger.error("No se pudo obtener token ML: %s", e)
+        return []
+
     all_props: list[dict] = []
     seen_ids:  set[str]   = set()
 
     for tipo, cat_id in CATEGORIAS.items():
         try:
-            props = _fetch_categoria(tipo, cat_id)
+            props = _fetch_categoria(tipo, cat_id, token)
             for p in props:
                 if p["id"] not in seen_ids:
                     seen_ids.add(p["id"])
